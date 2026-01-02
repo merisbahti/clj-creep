@@ -6,13 +6,16 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,6 +24,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -28,11 +32,26 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install dependencies
-        run: npm install
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            .cpcache
+            .shadow-cljs
+          key: ${{ runner.os }}-clj-${{ hashFiles('**/deps.edn', '**/shadow-cljs.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-clj-
 
-      - name: Build
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build ClojureScript
         run: npm run build
+
+      - name: List public directory
+        run: ls -la public/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
