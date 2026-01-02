@@ -89,13 +89,16 @@
                          (= (get-cell grid nx ny) EMPTY)
                          (< (rand) spread-chance))]
           ;; Find which colony owns this source tile
-          (let [source-colony (or (get colony-map [x y])
-                                  [x y]) ;; If source is a colony, it owns itself
-                [cx cy] source-colony
-                dist-sq (distance-squared nx ny cx cy)
-                max-reach-sq (* max-colony-reach max-colony-reach)]
-            (when (<= dist-sq max-reach-sq)
-              {:pos [nx ny] :colony source-colony})))
+          (let [cell-type (get-cell grid x y)
+                source-colony (if (= cell-type COLONY)
+                                [x y] ;; Colonies own themselves
+                                (get colony-map [x y]))] ;; Creep must be in colony-map
+            (when source-colony ;; Only spread if we know the owner
+              (let [[cx cy] source-colony
+                    dist-sq (distance-squared nx ny cx cy)
+                    max-reach-sq (* max-colony-reach max-colony-reach)]
+                (when (<= dist-sq max-reach-sq)
+                  {:pos [nx ny] :colony source-colony})))))
         ;; Filter out nils and apply changes
         valid-spreads (filter some? spread-results)
         new-grid (reduce (fn [g {:keys [pos]}]
