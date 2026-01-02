@@ -1,0 +1,233 @@
+(ns creep-colony.core
+  (:require [reagent.core :as r]
+            [reagent.dom :as rdom]))
+
+;; Game constants
+(def grid-size 40)
+(def initial-energy 100)
+(def colony-cost 50)
+(def energy-per-creep 0.1)
+(def creep-spread-interval 800) ;; ms
+(def energy-gain-interval 500) ;; ms
+(def win-threshold 0.6) ;; 60% coverage
+
+;; Cell types
+(def EMPTY 0)
+(def CREEP 1)
+(def COLONY 2)
+
+;; Initialize game state
+(defonce game-state
+  (r/atom {:grid (vec (repeat grid-size (vec (repeat grid-size EMPTY))))
+           :colonies #{}
+           :energy initial-energy
+           :ticks 0
+           :won false
+           :paused false}))
+
+;; Helper functions
+(defn in-bounds? [x y]
+  (and (>= x 0) (< x grid-size)
+       (>= y 0) (< y grid-size)))
+
+(defn get-cell [grid x y]
+  (when (in-bounds? x y)
+    (get-in grid [y x])))
+
+(defn set-cell [grid x y value]
+  (if (in-bounds? x y)
+    (assoc-in grid [y x] value)
+    grid))
+
+(defn neighbors [x y]
+  (for [dx [-1 0 1]
+        dy [-1 0 1]
+        :when (not (and (= dx 0) (= dy 0)))]
+    [(+ x dx) (+ y dy)]))
+
+(defn has-creep-neighbor? [grid x y]
+  (some (fn [[nx ny]]
+          (when-let [cell (get-cell grid nx ny)]
+            (or (= cell CREEP) (= cell COLONY))))
+        (neighbors x y)))
+
+(defn count-cells [grid cell-type]
+  (count (filter #(= % cell-type)
+                 (flatten grid))))
+
+(defn coverage-percentage [grid]
+  (let [total (* grid-size grid-size)
+        creep-count (+ (count-cells grid CREEP)
+                       (count-cells grid COLONY))]
+    (/ creep-count total)))
+
+;; Game logic
+(defn spread-creep [state]
+  (let [{:keys [grid colonies]} state
+        new-grid (reduce
+                  (fn [g [x y]]
+                    (reduce
+                     (fn [grid [nx ny]]
+                       (if (and (in-bounds? nx ny)
+                                (= (get-cell grid nx ny) EMPTY)
+                                (< (rand) 0.3)) ;; 30% chance to spread
+                         (set-cell grid nx ny CREEP)
+                         grid))
+                     g
+                     (neighbors x y)))
+                  grid
+                  ;; Get all creep and colony positions
+                  (for [y (range grid-size)
+                        x (range grid-size)
+                        :when (#{CREEP COLONY} (get-cell grid x y))]
+                    [x y]))]
+    (assoc state :grid new-grid)))
+
+(defn gain-energy [state]
+  (let [creep-count (+ (count-cells (:grid state) CREEP)
+                       (count-cells (:grid state) COLONY))
+        energy-gain (* creep-count energy-per-creep)]
+    (update state :energy + energy-gain)))
+
+(defn place-colony [state x y]
+  (let [{:keys [grid energy colonies]} state
+        cell (get-cell grid x y)]
+    (cond
+      (< energy colony-cost)
+      state ;; Not enough energy
+
+      (not (#{CREEP COLONY} cell))
+      state ;; Can only place on creep or replace colony
+
+      :else
+      (-> state
+          (update :grid set-cell x y COLONY)
+          (update :colonies conj [x y])
+          (update :energy - colony-cost)))))
+
+(defn check-victory [state]
+  (let [coverage (coverage-percentage (:grid state))]
+    (if (>= coverage win-threshold)
+      (assoc state :won true)
+      state)))
+
+(defn init-game []
+  (let [center (quot grid-size 2)
+        initial-grid (-> (vec (repeat grid-size (vec (repeat grid-size EMPTY))))
+                         (set-cell center center COLONY))]
+    (reset! game-state
+            {:grid initial-grid
+             :colonies #{[center center]}
+             :energy initial-energy
+             :ticks 0
+             :won false
+             :paused false})))
+
+;; Game loop
+(defn game-tick []
+  (when-not (:paused @game-state)
+    (swap! game-state
+           (fn [state]
+             (let [new-state (-> state
+                                 (update :ticks inc))]
+               (cond-> new-state
+                 (zero? (mod (:ticks new-state) 2))
+                 (spread-creep)
+
+                 (zero? (mod (:ticks new-state) 1))
+                 (gain-energy)
+
+                 true
+                 (check-victory)))))))
+
+;; UI Components
+(defn grid-cell [x y cell]
+  (let [can-afford? (>= (:energy @game-state) colony-cost)
+        is-creep? (= cell CREEP)
+        can-place? (and can-afford? is-creep?)]
+    [:div.grid-cell
+     {:class (case cell
+               0 "empty"
+               1 "creep"
+               2 "colony"
+               "empty")
+      :title (str "(" x "," y ")")
+      :style {:cursor (if can-place? "pointer" "default")}
+      :on-click (fn []
+                  (when (and can-place? (not (:won @game-state)))
+                    (swap! game-state place-colony x y)))}]))
+
+(defn game-grid []
+  (let [{:keys [grid]} @game-state]
+    [:div {:style {:text-align "center"}}
+     [:div.game-grid
+      {:style {:grid-template-columns (str "repeat(" grid-size ", 14px)")}}
+      (for [y (range grid-size)
+            x (range grid-size)]
+        ^{:key (str x "-" y)}
+        [grid-cell x y (get-cell grid x y)])]]))
+
+(defn game-stats []
+  (let [{:keys [energy grid]} @game-state
+        coverage (* 100 (coverage-percentage grid))
+        creep-tiles (+ (count-cells grid CREEP) (count-cells grid COLONY))]
+    [:div.game-info
+     [:div.stat
+      [:div.stat-value (Math/floor energy)]
+      [:div.stat-label "Energy"]]
+     [:div.stat
+      [:div.stat-value creep-tiles]
+      [:div.stat-label "Creep Tiles"]]
+     [:div.stat
+      [:div.stat-value (.toFixed coverage 1) "%"]
+      [:div.stat-label "Map Coverage"]]
+     [:div.stat
+      [:div.stat-value colony-cost]
+      [:div.stat-label "Colony Cost"]]]))
+
+(defn victory-screen []
+  (when (:won @game-state)
+    [:div.victory
+     [:h2 "🎉 VICTORY! 🎉"]
+     [:p {:style {:font-size "1.3em"}}
+      (str "You've conquered " (.toFixed (* 100 (coverage-percentage (:grid @game-state))) 1) "% of the map!")]
+     [:p "The creep spreads victorious across the lands."]
+     [:button
+      {:on-click init-game}
+      "Play Again"]]))
+
+(defn controls []
+  [:div {:style {:text-align "center" :margin "20px 0"}}
+   [:button
+    {:on-click #(swap! game-state update :paused not)}
+    (if (:paused @game-state) "Resume" "Pause")]
+   [:button
+    {:on-click init-game}
+    "New Game"]])
+
+(defn instructions []
+  [:div.instructions
+   [:h3 "How to Play"]
+   [:ul
+    [:li "You start with a single Creep Colony (glowing purple circle) in the center"]
+    [:li "Creep (purple tiles) spreads automatically from colonies"]
+    [:li "Creep generates Energy over time"]
+    [:li "Click on any creep tile to place a new colony (costs " colony-cost " energy)"]
+    [:li "More colonies = faster creep spread!"]
+    [:li "Goal: Cover " (* 100 win-threshold) "% of the map to win!"]]])
+
+(defn app []
+  [:div#app
+   [:h1.game-title "⚡ CREEP COLONY ⚡"]
+   [game-stats]
+   [controls]
+   [game-grid]
+   [instructions]
+   [victory-screen]])
+
+;; Initialize
+(defn ^:export init! []
+  (init-game)
+  (rdom/render [app] (.getElementById js/document "app"))
+  ;; Start game loop
+  (js/setInterval game-tick (/ creep-spread-interval 2)))

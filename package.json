@@ -1,0 +1,14 @@
+{
+  "name": "creep-colony-game",
+  "version": "1.0.0",
+  "description": "A creep colony expansion game inspired by StarCraft",
+  "scripts": {
+    "dev": "shadow-cljs watch app",
+    "build": "shadow-cljs release app"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "shadow-cljs": "^2.26.0"
+  }
+}
