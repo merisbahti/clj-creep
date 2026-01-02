@@ -37,6 +37,14 @@ The game will be available at `http://localhost:8080`
 npm run build
 ```
 
+### Deploy to GitHub Pages
+```bash
+npm run deploy
+```
+
+The game is automatically deployed to GitHub Pages via GitHub Actions when you push to the branch. The live version will be available at:
+- `https://<username>.github.io/clj-creep/`
+
 ## 🎮 Game Mechanics
 
 - **Creep Spreading**: Creep spreads to adjacent tiles with a chance-based system
