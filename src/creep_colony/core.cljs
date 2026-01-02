@@ -10,6 +10,8 @@
 (def creep-spread-interval 800) ;; ms
 (def energy-gain-interval 500) ;; ms
 (def win-threshold 0.6) ;; 60% coverage
+(def max-colony-reach 10) ;; Maximum distance creep can spread from a colony
+(def spread-chance 0.15) ;; Reduced from 0.3 to make spreading slower
 
 ;; Cell types
 (def EMPTY 0)
@@ -20,6 +22,7 @@
 (defonce game-state
   (r/atom {:grid (vec (repeat grid-size (vec (repeat grid-size EMPTY))))
            :colonies #{}
+           :colony-map {} ;; Maps [x y] -> [colony-x colony-y] to track which colony owns each tile
            :energy initial-energy
            :ticks 0
            :won false
@@ -61,27 +64,49 @@
                        (count-cells grid COLONY))]
     (/ creep-count total)))
 
+(defn manhattan-distance [x1 y1 x2 y2]
+  (+ (Math/abs (- x2 x1))
+     (Math/abs (- y2 y1))))
+
+(defn find-nearest-colony [x y colonies]
+  (when (seq colonies)
+    (apply min-key
+           (fn [[cx cy]] (manhattan-distance x y cx cy))
+           colonies)))
+
 ;; Game logic
 (defn spread-creep [state]
-  (let [{:keys [grid colonies]} state
-        new-grid (reduce
-                  (fn [g [x y]]
-                    (reduce
-                     (fn [grid [nx ny]]
-                       (if (and (in-bounds? nx ny)
-                                (= (get-cell grid nx ny) EMPTY)
-                                (< (rand) 0.3)) ;; 30% chance to spread
-                         (set-cell grid nx ny CREEP)
-                         grid))
-                     g
-                     (neighbors x y)))
-                  grid
-                  ;; Get all creep and colony positions
-                  (for [y (range grid-size)
-                        x (range grid-size)
-                        :when (#{CREEP COLONY} (get-cell grid x y))]
-                    [x y]))]
-    (assoc state :grid new-grid)))
+  (let [{:keys [grid colonies colony-map]} state
+        ;; Process each creep/colony tile
+        spread-results
+        (for [y (range grid-size)
+              x (range grid-size)
+              :when (#{CREEP COLONY} (get-cell grid x y))
+              [nx ny] (neighbors x y)
+              :when (and (in-bounds? nx ny)
+                         (= (get-cell grid nx ny) EMPTY)
+                         (< (rand) spread-chance))]
+          ;; Find which colony owns this source tile
+          (let [source-colony (or (get colony-map [x y])
+                                  [x y]) ;; If source is a colony, it owns itself
+                [cx cy] source-colony
+                distance (manhattan-distance nx ny cx cy)]
+            (when (<= distance max-colony-reach)
+              {:pos [nx ny] :colony source-colony})))
+        ;; Filter out nils and apply changes
+        valid-spreads (filter some? spread-results)
+        new-grid (reduce (fn [g {:keys [pos]}]
+                          (let [[x y] pos]
+                            (set-cell g x y CREEP)))
+                        grid
+                        valid-spreads)
+        new-colony-map (reduce (fn [m {:keys [pos colony]}]
+                                (assoc m pos colony))
+                              colony-map
+                              valid-spreads)]
+    (assoc state
+           :grid new-grid
+           :colony-map new-colony-map)))
 
 (defn gain-energy [state]
   (let [creep-count (+ (count-cells (:grid state) CREEP)
@@ -90,7 +115,7 @@
     (update state :energy + energy-gain)))
 
 (defn place-colony [state x y]
-  (let [{:keys [grid energy colonies]} state
+  (let [{:keys [grid energy colonies colony-map]} state
         cell (get-cell grid x y)]
     (cond
       (< energy colony-cost)
@@ -103,6 +128,7 @@
       (-> state
           (update :grid set-cell x y COLONY)
           (update :colonies conj [x y])
+          (update :colony-map assoc [x y] [x y]) ;; Colony owns itself
           (update :energy - colony-cost)))))
 
 (defn check-victory [state]
@@ -118,6 +144,7 @@
     (reset! game-state
             {:grid initial-grid
              :colonies #{[center center]}
+             :colony-map {[center center] [center center]} ;; Initial colony owns itself
              :energy initial-energy
              :ticks 0
              :won false
@@ -131,7 +158,7 @@
              (let [new-state (-> state
                                  (update :ticks inc))]
                (cond-> new-state
-                 (zero? (mod (:ticks new-state) 2))
+                 (zero? (mod (:ticks new-state) 3)) ;; Slower spread: every 3 ticks instead of 2
                  (spread-creep)
 
                  (zero? (mod (:ticks new-state) 1))
@@ -211,9 +238,10 @@
    [:ul
     [:li "You start with a single Creep Colony (glowing purple circle) in the center"]
     [:li "Creep (purple tiles) spreads automatically from colonies"]
+    [:li "Each colony has a maximum reach of " max-colony-reach " tiles"]
     [:li "Creep generates Energy over time"]
     [:li "Click on any creep tile to place a new colony (costs " colony-cost " energy)"]
-    [:li "More colonies = faster creep spread!"]
+    [:li "Place colonies strategically to extend your reach!"]
     [:li "Goal: Cover " (* 100 win-threshold) "% of the map to win!"]]])
 
 (defn app []
