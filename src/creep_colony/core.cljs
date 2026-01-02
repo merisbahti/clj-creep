@@ -64,14 +64,16 @@
                        (count-cells grid COLONY))]
     (/ creep-count total)))
 
-(defn manhattan-distance [x1 y1 x2 y2]
-  (+ (Math/abs (- x2 x1))
-     (Math/abs (- y2 y1))))
+(defn distance-squared [x1 y1 x2 y2]
+  "Calculate squared Euclidean distance (avoids sqrt for performance)"
+  (let [dx (- x2 x1)
+        dy (- y2 y1)]
+    (+ (* dx dx) (* dy dy))))
 
 (defn find-nearest-colony [x y colonies]
   (when (seq colonies)
     (apply min-key
-           (fn [[cx cy]] (manhattan-distance x y cx cy))
+           (fn [[cx cy]] (distance-squared x y cx cy))
            colonies)))
 
 ;; Game logic
@@ -90,8 +92,9 @@
           (let [source-colony (or (get colony-map [x y])
                                   [x y]) ;; If source is a colony, it owns itself
                 [cx cy] source-colony
-                distance (manhattan-distance nx ny cx cy)]
-            (when (<= distance max-colony-reach)
+                dist-sq (distance-squared nx ny cx cy)
+                max-reach-sq (* max-colony-reach max-colony-reach)]
+            (when (<= dist-sq max-reach-sq)
               {:pos [nx ny] :colony source-colony})))
         ;; Filter out nils and apply changes
         valid-spreads (filter some? spread-results)
